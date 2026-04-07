@@ -1,6 +1,6 @@
 # LINHAC 2026
 
-Faceoff
+Faceoff.....
 
 ## Installation
 
@@ -11,7 +11,7 @@ Faceoff
 This project is licensed under FlashbangFirmanAISociety (FFAIS) @2026
 | Role | Name |
 | --- | --- |
-| Analyst | Gabriel Matsson |
-| Analyst | Mervan Palmér |
-| Analyst | Nils Kihl |
-| Analyst | Olle Mineur |
+| Chief Analyst | Gabriel Matsson |
+| Head of Analytics | Mervan Palmér |
+| Machine Learning Analyst | Nils Kihl |
+| Staff Analyst | Olle Mineur |
