@@ -2,16 +2,13 @@
 
 Faceoff.....
 
-## Installation
+## Run
 
--
+### Filter python script
+To run filter_events.py
 
-## License
+Do pip install numpy and pandas
 
-This project is licensed under FlashbangFirmanAISociety (FFAIS) @2026
-| Role | Name |
-| --- | --- |
-| Chief Analyst | Gabriel Matsson |
-| Head of Analytics | Mervan Palmér |
-| Machine Learning Analyst | Nils Kihl |
-| Staff Analyst | Olle Mineur |
+run the filterevent, right now it is configured to call your csv file "1" but can be easily changed by changing variable name FILE_NAME.
+
+Script will output file "post_faceoff_events.csv" with all relevant events
