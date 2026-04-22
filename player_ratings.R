@@ -43,13 +43,14 @@ df <- df %>%
 period_weights   <- c("1" = 0.6, "2" = 0.8, "3" = 1.0, "4" = 1.5)
 manpower_weights <- c("evenStrength" = 1.0, "powerPlay" = 1.3, "shortHanded" = 1.3)
 
-leverage_score <- function(score_diff, period, manpower) {
+leverage_score <- function(score_diff, period, manpower, fo_x) {
   score_w   <- 1 / (1 + abs(score_diff))
   period_w  <- period_weights[as.character(period)]
   period_w  <- ifelse(is.na(period_w), 1.0, period_w)
   manpower_w <- manpower_weights[manpower]
   manpower_w <- ifelse(is.na(manpower_w), 1.0, manpower_w)
-  score_w * period_w * manpower_w
+  zone_w    <- ifelse(abs(fo_x) > 25, 1.3, 1.0)
+  score_w * period_w * manpower_w * zone_w
 }
 
 # ── 3b. ZONE VALUE HELPER ──────────────────────────────────────────────────────
@@ -83,7 +84,7 @@ faceoff_registry <- df %>%
   ) %>%
   filter(!is.na(winner_team), !is.na(loser_team)) %>%
   mutate(
-    leverage = leverage_score(score_diff, period, manpower),
+    leverage = leverage_score(score_diff, period, manpower, fo_x),
     fo_zone  = case_when(
       fo_x > 25 ~ "Offensive Zone",
       fo_x > 5  ~ "Neutral Zone",
@@ -175,7 +176,7 @@ players <- player_fo %>%
     lev_xg_gen     = sum(xg_gen[won]  * leverage[won]),
     lev_xg_con     = sum(xg_con[!won] * leverage[!won]),
     # Territorial: leverage-weighted zone delta across ALL faceoffs (won and lost).
-    # A DZ win → OZ is +4 × leverage; an OZ loss that collapses to own DZ is -4 × leverage.
+    # A DZ win → OZ is +4 x leverage; an OZ loss that collapses to own DZ is -4 x leverage.
     lev_terr       = sum(terr_delta * leverage),
     avg_leverage   = mean(leverage),
     .groups        = "drop"

@@ -39,7 +39,21 @@ df <- df %>%
   tidyr::fill(physical_faceoff_id, .direction = "downup") %>%
   ungroup()
 
-# ── 3. FACEOFF REGISTRY ────────────────────────────────────────────────────────
+# ── 3. LEVERAGE HELPERS ────────────────────────────────────────────────────────
+period_weights   <- c("1" = 0.6, "2" = 0.8, "3" = 1.0, "4" = 1.5)
+manpower_weights <- c("evenStrength" = 1.0, "powerPlay" = 1.3, "shortHanded" = 1.3)
+
+leverage_score <- function(score_diff, period, manpower, fo_x) {
+  score_w   <- 1 / (1 + abs(score_diff))
+  period_w  <- period_weights[as.character(period)]
+  period_w  <- ifelse(is.na(period_w), 1.0, period_w)
+  manpower_w <- manpower_weights[manpower]
+  manpower_w <- ifelse(is.na(manpower_w), 1.0, manpower_w)
+  zone_w    <- ifelse(abs(fo_x) > 25, 1.3, 1.0)
+  score_w * period_w * manpower_w * zone_w
+}
+
+# ── 4. FACEOFF REGISTRY ────────────────────────────────────────────────────────
 faceoff_registry <- df %>%
   filter(eventname == "faceoff") %>%
   group_by(gameid, physical_faceoff_id) %>%
@@ -49,17 +63,18 @@ faceoff_registry <- df %>%
     winner_player = playerid[outcome == "successful"][1],
     loser_player  = playerid[outcome == "failed"][1],
     fo_x          = xadjcoord[outcome == "successful"][1],
+    period        = first(period),
+    score_diff    = first(scoredifferential),
+    manpower      = first(manpowersituation),
     .groups       = "drop"
   ) %>%
   filter(!is.na(winner_team), !is.na(loser_team)) %>%
   mutate(
-    # fo_x = winner's xadjcoord. Positive = winner attacking (their OZ).
-    # Negative = winner defending (their DZ = loser's OZ).
-    # Must handle both signs or loser's OZ faceoffs become NZ → 100%/0% bug.
+    leverage = leverage_score(score_diff, period, manpower, fo_x),
     fo_zone_winner = case_when(
       fo_x >  25 ~ "Offensive Zone",
       fo_x > -25 ~ "Neutral Zone",
-      TRUE       ~ "Defensive Zone"  # winner in DZ = loser's OZ faceoff
+      TRUE       ~ "Defensive Zone"
     )
   )
 
@@ -95,6 +110,7 @@ player_fo <- bind_rows(
   fo_xg %>% transmute(
     playerid    = winner_player,
     won         = TRUE,
+    leverage,
     player_zone = fo_zone_winner,
     xg_for      = xg_winner,
     xg_against  = xg_loser
@@ -102,6 +118,7 @@ player_fo <- bind_rows(
   fo_xg %>% transmute(
     playerid    = loser_player,
     won         = FALSE,
+    leverage,
     player_zone = case_when(           # loser's zone = mirror of winner's
       fo_zone_winner == "Offensive Zone" ~ "Defensive Zone",
       fo_zone_winner == "Defensive Zone" ~ "Offensive Zone",
@@ -120,8 +137,8 @@ build_leaderboard <- function(data, min_fo) {
       n_fo         = n(),
       n_won        = sum(won),
       win_pct      = mean(won) * 100,
-      xg_created   = sum(xg_for[won]),
-      xg_conceded  = sum(xg_against[!won]),
+      xg_created   = sum(xg_for[won]      * leverage[won]),
+      xg_conceded  = sum(xg_against[!won] * leverage[!won]),
       impact_score = (xg_created - xg_conceded) / n_fo,
       .groups      = "drop"
     ) %>%
@@ -154,7 +171,10 @@ win_pct_color <- function(pct) {
 make_panel <- function(data, zone_label, min_fo_label, n = TOP_N) {
   top    <- data %>% arrange(desc(impact_score)) %>% slice_head(n = n)
   bottom <- data %>% arrange(impact_score)       %>% slice_head(n = n)
-  plot_data <- bind_rows(bottom, top) %>%
+  plot_data <- bind_rows(
+    bottom %>% mutate(.src = "bottom"),
+    top    %>% mutate(.src = "top")
+  ) %>%
     distinct(playerid, .keep_all = TRUE) %>%
     arrange(impact_score) %>%
     mutate(
@@ -164,17 +184,20 @@ make_panel <- function(data, zone_label, min_fo_label, n = TOP_N) {
       txt_hjust = ifelse(impact_score >= 0, -0.1, 1.1)
     )
 
+  divider_y <- sum(plot_data$.src == "bottom") + 0.5
+
   # Build plot — can't use aes(color) per-row in geom_text directly,
   # so loop over unique colors and layer them.
   p <- ggplot(plot_data, aes(x = impact_score, y = label)) +
     geom_col(aes(fill = bar_fill), width = 0.72, show.legend = FALSE) +
+    geom_hline(yintercept = divider_y, color = "gray50", linewidth = 0.6, linetype = "dashed") +
     geom_vline(xintercept = 0, color = "gray30", linewidth = 0.5) +
     scale_fill_identity() +
     scale_x_continuous(expand = expansion(mult = c(0.2, 0.2))) +
     labs(
       title    = zone_label,
       subtitle = sprintf("min. %s faceoffs in zone · top & bottom %d", min_fo_label, n),
-      x = "Impact score (net xG per faceoff)", y = NULL
+      x = "Impact score (leverage-weighted net xG per faceoff)", y = NULL
     ) +
     theme_minimal(base_size = 12) +
     theme(
@@ -202,8 +225,8 @@ p_dz <- make_panel(lb_dz, "Defensive Zone", MIN_FO_DZ)
 annotation <- plot_annotation(
   title    = "Faceoff Impact Score Leaderboard — by Zone (10-second window)",
   subtitle = paste0(
-    "Impact = (xG created when won - xG conceded when lost) / faceoffs in zone\n",
-    "Zone from each player's own perspective  ·  green text ≥ 55% win  ·  red text ≤ 45% win"
+    "Impact = (leverage-weighted xG created when won - xG conceded when lost) / faceoffs in zone\n",
+    "Leverage: score situation · period · power play · zone (endzone x1.3)  ·  green text ≥ 55% win  ·  red text ≤ 45% win"
   ),
   theme = theme(
     plot.title    = element_text(size = 15, face = "bold"),
