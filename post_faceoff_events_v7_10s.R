@@ -1,13 +1,10 @@
 rm(list = ls())
 library(tidyverse)
 
-# 1. Läs in data
+# Läs in data
 df_raw <- read.csv("post_faceoff_events_10s.csv", stringsAsFactors = FALSE)
 
-# 2. MASTER COUNT (Beräknas nu efter filtret för exakt matchning)
-# Vi definierar facit längre ner
-
-# 3. Registry - Identifiera varje lags startpunkt och roll
+# Registry - Identifiera varje lags startpunkt och roll
 faceoff_registry <- df_raw %>%
   filter(eventname == "faceoff") %>%
   arrange(gameid, compiledgametime) %>%
@@ -18,11 +15,10 @@ faceoff_registry <- df_raw %>%
                      faceoff_sequence_id)
   ) %>%
   ungroup() %>%
-  # --- VALIDERINGSSTEG: Behåll endast kompletta par (Lag A & B) ---
   group_by(gameid, join_id) %>%
   filter(n() == 2) %>% 
   ungroup() %>%
-  # ---------------------------------------------------------------
+
 mutate(
   my_zon = case_when(
     xadjcoord > 25   ~ "1. Offensiv Zon",
@@ -36,7 +32,7 @@ mutate(
     my_zon %in% c("4. Neutral Zon (Def)", "5. Defensiv Zon") ~ "Försvarande Lag",
     TRUE ~ ifelse(outcome == "successful", "Anfallande Lag", "Försvarande Lag")
   ),
-  # UPPDATERAD: Hjälpvariabel för leverage-viktning med tre nivåer
+
   zone_type = case_when(
     abs(xadjcoord) > 25 ~ "Endzone",
     abs(xadjcoord) > 5  ~ "Neutral_Side",
@@ -45,14 +41,13 @@ mutate(
 ) %>%
   select(gameid, faceoff_sequence_id, join_id, teamid, my_zon, my_role, zone_type, period, scoredifferential, manpowersituation, outcome)
 
-# Uppdaterad FACIT efter tvättning
 expected_unique_fos <- nrow(faceoff_registry) / 2
 
 cat("\n========================================================\n")
-cat("FACIT (Efter tvättning):", expected_unique_fos, "validerade fysiska tekningar.\n")
+cat("Antal tekningar:", expected_unique_fos, "\n")
 cat("========================================================\n\n")
 
-# 4. Event Stream (Inkluderar nu xG-kolumnen)
+# Event Stream
 event_stream <- df_raw %>%
   select(gameid, faceoff_sequence_id, eventname, outcome, teamid, xadjcoord, teaminpossession, xg_allattempts) %>%
   rename(
@@ -64,7 +59,7 @@ event_stream <- df_raw %>%
     ev_xg = xg_allattempts
   )
 
-# 4.5 Beräkna Netto-xG per sekvens (Reward-motorn)
+# Beräkna Netto-xG per sekvens
 xg_by_sequence <- faceoff_registry %>%
   inner_join(event_stream, by = c("gameid", "join_id" = "faceoff_sequence_id"), relationship = "many-to-many") %>%
   filter(ev_name %in% c("shot", "goal")) %>%
@@ -75,7 +70,7 @@ xg_by_sequence <- faceoff_registry %>%
     .groups = "drop"
   )
 
-# 5. Analysera utfall
+# Analysera utfall
 analysis_data <- faceoff_registry %>%
   inner_join(event_stream, by = c("gameid", "join_id" = "faceoff_sequence_id"), relationship = "many-to-many") %>%
   group_by(gameid, faceoff_sequence_id, teamid, my_zon, my_role, zone_type) %>%
@@ -121,7 +116,7 @@ analysis_data <- faceoff_registry %>%
     )
   )
 
-# 6. Beräkna FIS - UPPDATERAD LOGIK (Nu med ny Zon-trappa)
+# Beräkna FIS
 fis_results <- analysis_data %>%
   left_join(xg_by_sequence, by = c("gameid", "faceoff_sequence_id")) %>%
   mutate(
@@ -135,8 +130,6 @@ fis_results <- analysis_data %>%
     score_weight = 1 / (1 + abs(score_diff)),
     period_weight = case_when(period == 1 ~ 0.6, period == 2 ~ 0.8, period == 3 ~ 1.0, period >= 4 ~ 1.5, TRUE ~ 1.0),
     manpower_weight = ifelse(manpower == "evenStrength", 1.0, 1.3),
-    
-    # UPPDATERAD: Ny hierarkisk zon-viktning
     zone_weight = case_when(
       zone_type == "Endzone"      ~ 1.3,
       zone_type == "Neutral_Side" ~ 1.1,
@@ -146,8 +139,6 @@ fis_results <- analysis_data %>%
     leverage = score_weight * period_weight * manpower_weight * zone_weight,
     fis_score = reward * leverage
   )
-
-# --- UTSKRIFTER ---
 
 cat("\n--- TABELL 1: ZON IMPACT (FIS baserat på Netto-xG) ---\n")
 zon_impact <- fis_results %>%
@@ -159,7 +150,7 @@ zon_impact <- fis_results %>%
   )
 print(zon_impact)
 
-cat("\n--- TABELL 3: FINAL REPORT (Logisk Rangordning) ---\n")
+cat("\n--- TABELL 2: FINAL REPORT ---\n")
 final_report <- fis_results %>%
   group_by(my_zon, my_role, total_utfall) %>%
   summarise(Antal_Tekningar = n(), .groups = "drop") %>%
